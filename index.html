@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>학교 공문서 점검 도구</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: "Malgun Gothic", sans-serif; background: #f4f6fa; margin: 0; color: #222; }
+    main { max-width: 900px; margin: 0 auto; padding: 24px 16px 60px; }
+    h1 { font-size: 24px; }
+    .card { background: #fff; border-radius: 12px; padding: 20px; margin-bottom: 16px;
+            box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+    textarea { width: 100%; height: 260px; padding: 12px; font-size: 15px; line-height: 1.6;
+               border: 1px solid #ccd; border-radius: 8px; resize: vertical; font-family: inherit; }
+    button { background: #2f5bea; color: #fff; border: 0; padding: 12px 24px; font-size: 16px;
+             border-radius: 8px; cursor: pointer; }
+    button:disabled { background: #9aa; cursor: wait; }
+    .opt { font-size: 14px; margin: 8px 0 14px; color: #555; }
+    .score { font-size: 40px; font-weight: bold; color: #2f5bea; }
+    .issue { border-left: 5px solid #ccc; padding: 10px 14px; margin: 10px 0; background: #fafafa; }
+    .issue.high { border-color: #e03e3e; }
+    .issue.medium { border-color: #f0a020; }
+    .issue.low { border-color: #3a9c5a; }
+    .tag { display: inline-block; font-size: 12px; background: #e8ecf8; padding: 2px 8px;
+           border-radius: 10px; margin-right: 6px; }
+    .orig { color: #c0392b; text-decoration: line-through; }
+    .sugg { color: #1b7a3d; font-weight: bold; }
+    pre { white-space: pre-wrap; background: #f7f7f7; padding: 14px; border-radius: 8px;
+          line-height: 1.7; font-family: inherit; }
+    .warn { font-size: 13px; color: #a33; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>📄 학교 공문서 점검 도구</h1>
+
+  <section class="card">
+    <textarea id="input" placeholder="점검할 공문서 초안을 붙여넣으세요."></textarea>
+    <div class="opt">
+      <label><input type="checkbox" id="mask" checked />
+        전송 전 주민번호·전화번호·이메일 자동 가림(마스킹)</label>
+    </div>
+    <button id="btn">점검하기</button>
+    <p class="warn">※ 학생·학부모 실명 등 개인정보는 입력 전에 직접 삭제하거나 가명(○○○)으로 바꿔 주세요.
+       입력 내용은 외부 AI 서버로 전송됩니다.</p>
+  </section>
+
+  <section id="result" class="card" hidden></section>
+</main>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+
+  // 개인정보 패턴을 브라우저에서 먼저 가립니다.
+  function maskPersonalInfo(t) {
+    return t
+      .replace(/\d{6}-\d{7}/g, "******-*******")
+      .replace(/01[016789]-?\d{3,4}-?\d{4}/g, "010-****-****")
+      .replace(/[\w.+-]+@[\w-]+\.[\w.-]+/g, "****@****");
+  }
+
+  // 화면에 넣을 요소를 안전하게 만드는 도우미 (textContent 사용 → XSS 방지)
+  function el(tag, cls, text) {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined) e.textContent = text;
+    return e;
+  }
+
+  function render(data) {
+    const box = $("result");
+    box.replaceChildren();
+    box.hidden = false;
+
+    box.append(el("div", "score", `${data.score ?? "-"}점`));
+    box.append(el("p", "", data.summary || ""));
+
+    const issues = data.issues || [];
+    box.append(el("h3", "", `점검 결과 (${issues.length}건)`));
+    if (issues.length === 0) box.append(el("p", "", "발견된 문제가 없습니다. 👍"));
+
+    issues.forEach((it) => {
+      const d = el("div", "issue " + (it.severity || "low"));
+      d.append(el("span", "tag", it.category || "기타"));
+      d.append(el("span", "orig", it.original || ""));
+      d.append(document.createTextNode(" → "));
+      d.append(el("span", "sugg", it.suggestion || ""));
+      d.append(el("div", "", "💬 " + (it.reason || "")));
+      box.append(d);
+    });
+
+    box.append(el("h3", "", "수정본"));
+    box.append(el("pre", "", data.revised_text || ""));
+
+    const copy = el("button", "", "수정본 복사");
+    copy.onclick = () => navigator.clipboard.writeText(data.revised_text || "");
+    box.append(copy);
+  }
+
+  $("btn").onclick = async () => {
+    let text = $("input").value.trim();
+    if (!text) return alert("점검할 내용을 입력해 주세요.");
+    if ($("mask").checked) text = maskPersonalInfo(text);
+
+    $("btn").disabled = true;
+    $("btn").textContent = "점검 중...";
+    try {
+      const r = await fetch("/api/check", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || "오류가 발생했습니다.");
+      render(data);
+    } catch (e) {
+      alert(e.message);
+    } finally {
+      $("btn").disabled = false;
+      $("btn").textContent = "점검하기";
+    }
+  };
+</script>
+</body>
+</html>
